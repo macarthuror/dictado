@@ -195,6 +195,13 @@ button.danger:hover:not(:disabled) {
   border: 1px dashed #cbd5e1;
 }
 
+.target-meaning {
+  font-size: 1.2rem;
+  color: #64748b;
+  margin-top: 0.5rem;
+  font-weight: normal;
+}
+
 .input-wrapper {
   margin: 0.5rem 0;
 }
@@ -217,6 +224,13 @@ button.danger:hover:not(:disabled) {
 }
 .feedback-alert.placeholder {
   visibility: hidden;
+}
+
+.feedback-meaning {
+  font-size: 0.95rem;
+  font-weight: normal;
+  margin-top: 0.5rem;
+  opacity: 0.9;
 }
 
 .error-list {
@@ -255,4 +269,48 @@ button.danger:hover:not(:disabled) {
 }
 .shake {
   animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+/* SEO Instructions */
+.instructions-section {
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  text-align: left;
+}
+
+@media (min-width: 768px) {
+  .instructions-section {
+    flex-direction: row;
+    gap: 2rem;
+  }
+  .instructions-content {
+    flex: 1;
+  }
+}
+
+.instructions-content h2 {
+  font-size: 1.25rem;
+  color: #1e293b;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.instructions-content p, 
+.instructions-content ol {
+  font-size: 0.95rem;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.instructions-content ol {
+  padding-left: 1.25rem;
+  margin-top: 0.5rem;
+}
+
+.instructions-content li {
+  margin-bottom: 0.5rem;
 }

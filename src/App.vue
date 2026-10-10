@@ -43,6 +43,13 @@ const startStudy = () => {
     .split('\n')
     .map(w => w.trim())
     .filter(w => w.length > 0)
+    .map(w => {
+      const parts = w.split('\t');
+      return {
+        word: parts[0].trim(),
+        meaning: parts.length > 1 ? parts[1].trim() : null
+      };
+    })
   
   if (words.length === 0) return
 
@@ -66,10 +73,10 @@ const startStudy = () => {
 }
 
 const speakWord = () => {
-  const text = studyList.value[currentIndex.value]
-  if (!text) return
+  const item = studyList.value[currentIndex.value]
+  if (!item) return
 
-  const utterance = new SpeechSynthesisUtterance(text)
+  const utterance = new SpeechSynthesisUtterance(item.word)
   utterance.lang = selectedLanguage.value
   utterance.rate = speechRate.value
   window.speechSynthesis.speak(utterance)
@@ -78,15 +85,16 @@ const speakWord = () => {
 const checkAnswer = () => {
   if (feedback.value !== null) return // already checked
   
-  const expected = studyList.value[currentIndex.value]
+  const currentItem = studyList.value[currentIndex.value]
+  const expectedWord = currentItem.word
   const typed = userAnswer.value.trim()
 
-  if (typed.toLowerCase() === expected.toLowerCase()) {
+  if (typed.toLowerCase() === expectedWord.toLowerCase()) {
     feedback.value = 'correct'
     score.value++
   } else {
     feedback.value = 'incorrect'
-    errors.value.push({ expected, typed: typed || '(vacío)' })
+    errors.value.push({ expected: expectedWord, meaning: currentItem.meaning, typed: typed || '(vacío)' })
     triggerShake()
   }
 }
@@ -130,7 +138,7 @@ const reset = () => {
           <label>Palabras (una por línea):</label>
           <textarea 
             v-model="wordsInput" 
-            placeholder="Ejemplo:&#10;manzana&#10;perro&#10;casa"
+            placeholder="Ejemplo:&#10;apple&#9;manzana&#10;dog&#9;perro&#10;house&#9;casa"
           ></textarea>
         </div>
 
@@ -155,6 +163,34 @@ const reset = () => {
         </div>
 
         <button @click="startStudy">Iniciar Dictado</button>
+        
+        <section class="instructions-section">
+          <div class="instructions-content">
+            <h2>¿Cómo usar nuestra App de Dictado Online?</h2>
+            <p>
+              Nuestra <strong>App de Dictado</strong> está diseñada para ayudarte a mejorar tu ortografía y comprensión auditiva. Sigue estos pasos para comenzar tu <em>spelling practice</em>:
+            </p>
+            <ol>
+              <li><strong>Ingresa tus palabras:</strong> Escribe una palabra por línea en el área de texto.</li>
+              <li><strong>Selecciona el idioma:</strong> Elige el idioma que deseas practicar.</li>
+              <li><strong>Ajusta la velocidad:</strong> Modifica la velocidad de la voz según tu nivel.</li>
+              <li><strong>¡Inicia el dictado online!</strong> Escucha atentamente y escribe lo que oyes. Al final, obtendrás un resumen de tus resultados.</li>
+            </ol>
+          </div>
+
+          <div class="instructions-content">
+            <h2>How to use our Online Dictation Tool?</h2>
+            <p>
+              Our <strong>Online Dictation Tool</strong> is designed to help you improve your spelling and listening skills. Follow these steps to start your <em>spelling practice</em>:
+            </p>
+            <ol>
+              <li><strong>Enter your words:</strong> Type one word per line in the text area.</li>
+              <li><strong>Select the language:</strong> Choose the language you want to practice.</li>
+              <li><strong>Adjust the speed:</strong> Modify the voice speed according to your level.</li>
+              <li><strong>Start the online dictation!</strong> Listen carefully and type what you hear. At the end, you will get a summary of your results.</li>
+            </ol>
+          </div>
+        </section>
       </div>
 
       <!-- MODO ESTUDIO -->
@@ -168,7 +204,12 @@ const reset = () => {
         </div>
         
         <Transition name="fade" mode="out-in">
-          <h2 :key="currentIndex" v-if="showWord" class="target-word">{{ studyList[currentIndex] }}</h2>
+          <div :key="currentIndex" v-if="showWord" class="target-word">
+            {{ studyList[currentIndex].word }}
+            <div v-if="studyList[currentIndex].meaning" class="target-meaning">
+              {{ studyList[currentIndex].meaning }}
+            </div>
+          </div>
         </Transition>
 
         <div v-if="!showWord" :class="{ 'shake': isShaking }" class="input-wrapper">
@@ -186,9 +227,15 @@ const reset = () => {
         <Transition name="fade" mode="out-in">
           <div v-if="feedback === 'correct' && !showWord" class="feedback-alert correct">
             ✅ ¡Correcto!
+            <div v-if="studyList[currentIndex].meaning" class="feedback-meaning">
+              Significado: {{ studyList[currentIndex].meaning }}
+            </div>
           </div>
           <div v-else-if="feedback === 'incorrect' && !showWord" class="feedback-alert incorrect">
-            ❌ Incorrecto. Era: <strong>{{ studyList[currentIndex] }}</strong>
+            ❌ Incorrecto. Era: <strong>{{ studyList[currentIndex].word }}</strong>
+            <div v-if="studyList[currentIndex].meaning" class="feedback-meaning">
+              Significado: {{ studyList[currentIndex].meaning }}
+            </div>
           </div>
           <div v-else-if="!showWord" class="feedback-alert placeholder">
             <!-- invisible placeholder to prevent layout jump -->
@@ -216,7 +263,8 @@ const reset = () => {
           <div v-if="errors.length > 0" class="error-list">
             <h3>Errores:</h3>
             <div v-for="(err, index) in errors" :key="index" class="error-item">
-              <strong>Correcto:</strong> {{ err.expected }}<br>
+              <strong>Correcto:</strong> {{ err.expected }}
+              <span v-if="err.meaning"> ({{ err.meaning }})</span><br>
               <strong>Escribiste:</strong> {{ err.typed }}
             </div>
           </div>
