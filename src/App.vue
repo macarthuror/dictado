@@ -2,7 +2,55 @@
 import { ref, onMounted, nextTick } from 'vue'
 
 const currentMode = ref('setup') // 'setup', 'study', 'summary'
-const wordsInput = ref('')
+const tableData = ref([])
+
+const addRow = () => {
+  tableData.value.push({ word: '', meaning: '' })
+}
+
+const removeRow = (index) => {
+  tableData.value.splice(index, 1)
+  if (tableData.value.length === 0) {
+    addRow()
+  }
+}
+
+const clearAll = () => {
+  if (confirm('¿Estás seguro de que quieres borrar todas las palabras?')) {
+    tableData.value = [
+      { word: '', meaning: '' },
+      { word: '', meaning: '' },
+      { word: '', meaning: '' }
+    ]
+  }
+}
+
+const handlePaste = (e) => {
+  const pasteData = (e.clipboardData || window.clipboardData).getData('text')
+  if (!pasteData) return
+  
+  const rows = pasteData.split('\n').map(r => r.trim()).filter(r => r.length > 0)
+  if (rows.length === 0) return
+
+  if (rows.length > 1 || rows[0].includes('\t')) {
+    e.preventDefault()
+    
+    const newRows = rows.map(r => {
+      const parts = r.split('\t')
+      return {
+        word: parts[0] ? parts[0].trim() : '',
+        meaning: parts.length > 1 ? parts[1].trim() : ''
+      }
+    })
+    
+    const filteredCurrent = tableData.value.filter(r => r.word || r.meaning)
+    tableData.value = [...filteredCurrent, ...newRows]
+    
+    if (tableData.value.length === 0) {
+      addRow()
+    }
+  }
+}
 const selectedLanguage = ref('es-ES')
 const showWord = ref(false)
 const speechRate = ref(1.0) // UX: velocidad de la voz
@@ -17,7 +65,26 @@ const inputRef = ref(null) // Referencia al input para enfocarlo
 
 onMounted(() => {
   const savedWords = localStorage.getItem('dictado_words')
-  if (savedWords) wordsInput.value = savedWords
+  if (savedWords) {
+    try {
+      const parsed = JSON.parse(savedWords)
+      if (Array.isArray(parsed)) {
+        tableData.value = parsed
+      }
+    } catch (e) {
+      tableData.value = savedWords.split('\n').map(w => w.trim()).filter(w => w.length > 0).map(w => {
+        const parts = w.split('\t')
+        return {
+          word: parts[0].trim(),
+          meaning: parts.length > 1 ? parts[1].trim() : ''
+        }
+      })
+    }
+  }
+  
+  if (tableData.value.length === 0) {
+    tableData.value.push({ word: '', meaning: '' }, { word: '', meaning: '' }, { word: '', meaning: '' })
+  }
   
   const savedLang = localStorage.getItem('dictado_lang')
   if (savedLang) selectedLanguage.value = savedLang
@@ -30,31 +97,17 @@ onMounted(() => {
 })
 
 const startStudy = () => {
-  if (!wordsInput.value.trim()) return
+  const validRows = tableData.value.filter(r => r.word.trim().length > 0)
+  if (validRows.length === 0) return
 
   // Save to localStorage
-  localStorage.setItem('dictado_words', wordsInput.value)
+  localStorage.setItem('dictado_words', JSON.stringify(validRows))
   localStorage.setItem('dictado_lang', selectedLanguage.value)
   localStorage.setItem('dictado_show_word', showWord.value)
   localStorage.setItem('dictado_speed', speechRate.value)
 
-  // Parse words
-  const words = wordsInput.value
-    .split('\n')
-    .map(w => w.trim())
-    .filter(w => w.length > 0)
-    .map(w => {
-      const parts = w.split('\t');
-      return {
-        word: parts[0].trim(),
-        meaning: parts.length > 1 ? parts[1].trim() : null
-      };
-    })
-  
-  if (words.length === 0) return
-
   // Shuffle array
-  studyList.value = words.sort(() => Math.random() - 0.5)
+  studyList.value = validRows.map(r => ({ ...r, word: r.word.trim(), meaning: r.meaning.trim() })).sort(() => Math.random() - 0.5)
   
   // Reset state
   currentIndex.value = 0
@@ -134,12 +187,29 @@ const reset = () => {
       <div v-if="currentMode === 'setup'" key="setup">
         <h1>App de Dictado</h1>
         
-        <div class="form-group">
-          <label>Palabras (una por línea):</label>
-          <textarea 
-            v-model="wordsInput" 
-            placeholder="Ejemplo:&#10;apple&#9;manzana&#10;dog&#9;perro&#10;house&#9;casa"
-          ></textarea>
+        <div class="table-editor" @paste="handlePaste">
+          <table>
+            <thead>
+              <tr>
+                <th>Palabra</th>
+                <th>Significado (Opcional)</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableData" :key="index">
+                <td><input type="text" v-model="row.word" placeholder="Ej: apple" /></td>
+                <td><input type="text" v-model="row.meaning" placeholder="Ej: manzana" /></td>
+                <td style="width: 40px; text-align: center;">
+                  <button class="icon-btn danger-icon" @click="removeRow(index)" title="Eliminar fila">🗑️</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="table-actions">
+            <button class="secondary add-row-btn" @click="addRow">+ Añadir fila</button>
+            <button class="danger clear-all-btn" @click="clearAll">Borrar todo</button>
+          </div>
         </div>
 
         <div class="form-group">
