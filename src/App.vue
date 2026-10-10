@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 
 const currentMode = ref('setup') // 'setup', 'study', 'summary'
 const tableData = ref([])
@@ -51,9 +51,10 @@ const handlePaste = (e) => {
     }
   }
 }
+
 const selectedLanguage = ref('es-ES')
 const showWord = ref(false)
-const speechRate = ref(1.0) // UX: velocidad de la voz
+const speechRate = ref(1.0)
 const studyList = ref([])
 const currentIndex = ref(0)
 const userAnswer = ref('')
@@ -62,6 +63,112 @@ const score = ref(0)
 const errors = ref([]) // { expected, typed }
 const isShaking = ref(false) // Animación de error
 const inputRef = ref(null) // Referencia al input para enfocarlo
+
+// --- NUEVA LÓGICA DE AUDIO (WEB AUDIO API Y NATIVO) ---
+const audioEngine = ref('online') // 'online' (Web Audio API) o 'offline' (Nativo)
+const enableReverb = ref(false)
+const availableVoices = ref([])
+const selectedVoiceURI = ref('')
+
+let audioCtx = null
+let biquadFilter = null
+let convolver = null
+let audioSource = null
+let htmlAudioElement = null
+
+const initWebAudio = async () => {
+  if (audioCtx) return
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+  
+  htmlAudioElement = new Audio()
+  htmlAudioElement.crossOrigin = "anonymous"
+  
+  audioSource = audioCtx.createMediaElementSource(htmlAudioElement)
+  
+  // Ecualizador para dar más claridad a la voz
+  biquadFilter = audioCtx.createBiquadFilter()
+  biquadFilter.type = 'highshelf'
+  biquadFilter.frequency.value = 2000
+  biquadFilter.gain.value = 3 // Pequeño realce de agudos
+  
+  // Efecto Reverb / Eco espacial
+  convolver = audioCtx.createConvolver()
+  const rate = audioCtx.sampleRate
+  const length = rate * 1.5 // 1.5 segundos
+  const impulse = audioCtx.createBuffer(2, length, rate)
+  const left = impulse.getChannelData(0)
+  const right = impulse.getChannelData(1)
+  for (let i = 0; i < length; i++) {
+    const decay = Math.exp(-3 * (i / rate))
+    left[i] = (Math.random() * 2 - 1) * decay
+    right[i] = (Math.random() * 2 - 1) * decay
+  }
+  convolver.buffer = impulse
+
+  audioSource.connect(biquadFilter)
+}
+
+const loadVoices = () => {
+  const langPrefix = selectedLanguage.value.split('-')[0]
+  availableVoices.value = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith(langPrefix))
+  
+  if (availableVoices.value.length > 0) {
+    // Si no hay voz seleccionada o la actual no es del idioma correcto
+    if (!selectedVoiceURI.value || !availableVoices.value.find(v => v.voiceURI === selectedVoiceURI.value)) {
+      selectedVoiceURI.value = availableVoices.value[0].voiceURI
+    }
+  }
+}
+
+watch(selectedLanguage, () => {
+  loadVoices()
+})
+
+const playAudio = async (text) => {
+  if (audioEngine.value === 'online') {
+    try {
+      if (!audioCtx) await initWebAudio()
+      if (audioCtx.state === 'suspended') await audioCtx.resume()
+      
+      biquadFilter.disconnect()
+      
+      if (enableReverb.value) {
+        biquadFilter.connect(convolver)
+        convolver.connect(audioCtx.destination)
+      } else {
+        biquadFilter.connect(audioCtx.destination)
+      }
+      
+      const lang = selectedLanguage.value.split('-')[0]
+      const gUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`
+      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(gUrl)}`
+      
+      htmlAudioElement.src = proxyUrl
+      htmlAudioElement.preservesPitch = true
+      htmlAudioElement.playbackRate = parseFloat(speechRate.value)
+      
+      await htmlAudioElement.play()
+    } catch (e) {
+      console.error("Error reproduciendo Web Audio, usando nativo:", e)
+      playNativeTTS(text)
+    }
+  } else {
+    playNativeTTS(text)
+  }
+}
+
+const playNativeTTS = (text) => {
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.lang = selectedLanguage.value
+  utterance.rate = parseFloat(speechRate.value) // Asegurarse de que sea Float
+  
+  if (selectedVoiceURI.value) {
+    const voice = availableVoices.value.find(v => v.voiceURI === selectedVoiceURI.value)
+    if (voice) utterance.voice = voice
+  }
+  
+  window.speechSynthesis.speak(utterance)
+}
 
 onMounted(() => {
   const savedWords = localStorage.getItem('dictado_words')
@@ -94,17 +201,49 @@ onMounted(() => {
 
   const savedSpeed = localStorage.getItem('dictado_speed')
   if (savedSpeed !== null) speechRate.value = parseFloat(savedSpeed)
+
+  // Cargar estado de audio
+  const savedEngine = localStorage.getItem('dictado_engine')
+  if (savedEngine) audioEngine.value = savedEngine
+  
+  const savedReverb = localStorage.getItem('dictado_reverb')
+  if (savedReverb !== null) enableReverb.value = savedReverb === 'true'
+  
+  const savedVoice = localStorage.getItem('dictado_voice')
+  if (savedVoice) selectedVoiceURI.value = savedVoice
+
+  if (window.speechSynthesis) {
+    window.speechSynthesis.onvoiceschanged = loadVoices
+    // Intento inicial (algunos navegadores las tienen de inmediato)
+    loadVoices()
+  }
 })
+
+// --- Auto-Save Watchers ---
+watch(tableData, (newVal) => {
+  const validRows = newVal.filter(r => r.word.trim().length > 0)
+  localStorage.setItem('dictado_words', JSON.stringify(validRows))
+}, { deep: true })
+
+watch(selectedLanguage, (newVal) => localStorage.setItem('dictado_lang', newVal))
+watch(showWord, (newVal) => localStorage.setItem('dictado_show_word', newVal))
+watch(speechRate, (newVal) => localStorage.setItem('dictado_speed', newVal))
+watch(audioEngine, (newVal) => localStorage.setItem('dictado_engine', newVal))
+watch(enableReverb, (newVal) => localStorage.setItem('dictado_reverb', newVal))
+watch(selectedVoiceURI, (newVal) => localStorage.setItem('dictado_voice', newVal))
+
+const testVoice = () => {
+  const firstValidRow = tableData.value.find(r => r.word.trim().length > 0)
+  const textToSpeak = firstValidRow 
+    ? firstValidRow.word 
+    : (selectedLanguage.value === 'ja-JP' ? 'テスト' : 'Prueba')
+
+  playAudio(textToSpeak)
+}
 
 const startStudy = () => {
   const validRows = tableData.value.filter(r => r.word.trim().length > 0)
   if (validRows.length === 0) return
-
-  // Save to localStorage
-  localStorage.setItem('dictado_words', JSON.stringify(validRows))
-  localStorage.setItem('dictado_lang', selectedLanguage.value)
-  localStorage.setItem('dictado_show_word', showWord.value)
-  localStorage.setItem('dictado_speed', speechRate.value)
 
   // Shuffle array
   studyList.value = validRows.map(r => ({ ...r, word: r.word.trim(), meaning: r.meaning.trim() })).sort(() => Math.random() - 0.5)
@@ -127,12 +266,9 @@ const startStudy = () => {
 
 const speakWord = () => {
   const item = studyList.value[currentIndex.value]
-  if (!item) return
-
-  const utterance = new SpeechSynthesisUtterance(item.word)
-  utterance.lang = selectedLanguage.value
-  utterance.rate = speechRate.value
-  window.speechSynthesis.speak(utterance)
+  if (item) {
+    playAudio(item.word)
+  }
 }
 
 const checkAnswer = () => {
@@ -220,6 +356,36 @@ const reset = () => {
           </select>
         </div>
 
+        <div class="form-group audio-settings">
+          <label>Motor de Audio:</label>
+          <div style="display: flex; gap: 1rem; margin-top: 0.5rem; flex-direction: column;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+              <input type="radio" v-model="audioEngine" value="online" />
+              Online (Web Audio API - Más natural y preserva tono)
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+              <input type="radio" v-model="audioEngine" value="offline" />
+              Nativo del Navegador
+            </label>
+          </div>
+        </div>
+
+        <div v-if="audioEngine === 'online'" class="checkbox-container form-group">
+          <label>
+            <input type="checkbox" v-model="enableReverb" />
+            Activar Eco (Reverb Espacial)
+          </label>
+        </div>
+
+        <div v-if="audioEngine === 'offline' && availableVoices.length > 0" class="form-group">
+          <label>Voz del Navegador:</label>
+          <select v-model="selectedVoiceURI">
+            <option v-for="voice in availableVoices" :key="voice.voiceURI" :value="voice.voiceURI">
+              {{ voice.name }}
+            </option>
+          </select>
+        </div>
+
         <div class="checkbox-container form-group">
           <label>
             <input type="checkbox" v-model="showWord" />
@@ -228,8 +394,11 @@ const reset = () => {
         </div>
 
         <div class="form-group">
-          <label>Velocidad de voz: {{ speechRate }}x</label>
-          <input type="range" v-model="speechRate" min="0.5" max="2.0" step="0.1" class="slider" />
+          <div class="label-with-action">
+            <label>Velocidad de voz: {{ speechRate }}x</label>
+            <button class="icon-btn small-btn" @click="testVoice" title="Probar voz">🔊</button>
+          </div>
+          <input type="range" v-model.number="speechRate" min="0.5" max="2.0" step="0.1" class="slider" />
         </div>
 
         <button @click="startStudy">Iniciar Dictado</button>
@@ -243,21 +412,8 @@ const reset = () => {
             <ol>
               <li><strong>Ingresa tus palabras:</strong> Escribe una palabra por línea en el área de texto.</li>
               <li><strong>Selecciona el idioma:</strong> Elige el idioma que deseas practicar.</li>
-              <li><strong>Ajusta la velocidad:</strong> Modifica la velocidad de la voz según tu nivel.</li>
+              <li><strong>Ajusta la velocidad:</strong> Modifica la velocidad de la voz según tu nivel. (Usa Online TTS para mantener el tono).</li>
               <li><strong>¡Inicia el dictado online!</strong> Escucha atentamente y escribe lo que oyes. Al final, obtendrás un resumen de tus resultados.</li>
-            </ol>
-          </div>
-
-          <div class="instructions-content">
-            <h2>How to use our Online Dictation Tool?</h2>
-            <p>
-              Our <strong>Online Dictation Tool</strong> is designed to help you improve your spelling and listening skills. Follow these steps to start your <em>spelling practice</em>:
-            </p>
-            <ol>
-              <li><strong>Enter your words:</strong> Type one word per line in the text area.</li>
-              <li><strong>Select the language:</strong> Choose the language you want to practice.</li>
-              <li><strong>Adjust the speed:</strong> Modify the voice speed according to your level.</li>
-              <li><strong>Start the online dictation!</strong> Listen carefully and type what you hear. At the end, you will get a summary of your results.</li>
             </ol>
           </div>
         </section>
